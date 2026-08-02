@@ -2,12 +2,11 @@ import numpy as np
 import sounddevice as sd
 import threading
 import time
+import webview
 
 SAMPLE_RATE = 44100
 BLOCK_SIZE = 1024
-IDLE_TIMEOUT = 5.0  # seconds of no tapping before drone fades out
-
-# ---------- LIVE MIXER ----------
+IDLE_TIMEOUT = 5.0
 
 active_notes = []
 lock = threading.Lock()
@@ -16,12 +15,12 @@ drone_pos = 0
 drone_gain = 0.0
 drone_target_gain = 1.0
 last_tap_time = time.time()
+stream = None
 
 
 def audio_callback(outdata, frames, time_info, status):
     global drone_pos, drone_gain
     buffer = np.zeros(frames, dtype=np.float32)
-
     with lock:
         if drone_wave is not None:
             step = 0.02
@@ -29,7 +28,6 @@ def audio_callback(outdata, frames, time_info, status):
                 drone_gain = min(drone_gain + step, drone_target_gain)
             elif drone_gain > drone_target_gain:
                 drone_gain = max(drone_gain - step, drone_target_gain)
-
             end = drone_pos + frames
             if end <= len(drone_wave):
                 buffer += drone_wave[drone_pos:end] * drone_gain
@@ -41,7 +39,6 @@ def audio_callback(outdata, frames, time_info, status):
                 buffer[:len(part1)] += part1 * drone_gain
                 buffer[len(part1):len(part1) + len(part2)] += part2 * drone_gain
                 drone_pos = remaining
-
         still_active = []
         for note in active_notes:
             wave = note["wave"]
@@ -53,7 +50,6 @@ def audio_callback(outdata, frames, time_info, status):
             if note["pos"] < len(wave):
                 still_active.append(note)
         active_notes[:] = still_active
-
     np.clip(buffer, -1.0, 1.0, out=buffer)
     outdata[:, 0] = buffer
 
@@ -64,17 +60,11 @@ def idle_watcher():
         time.sleep(0.5)
         idle_for = time.time() - last_tap_time
         with lock:
-            if idle_for > IDLE_TIMEOUT:
-                drone_target_gain = 0.0
-            else:
-                drone_target_gain = 1.0
+            drone_target_gain = 0.0 if idle_for > IDLE_TIMEOUT else 1.0
 
-
-# ---------- SOUND GENERATION ----------
 
 def generate_tone(frequency, duration, sample_rate=SAMPLE_RATE):
     t = np.linspace(0, duration, int(sample_rate * duration), False)
-
     wave = (
             1.00 * np.sin(2 * np.pi * frequency * t) +
             0.25 * np.sin(2 * np.pi * frequency * 2 * t) +
@@ -82,30 +72,17 @@ def generate_tone(frequency, duration, sample_rate=SAMPLE_RATE):
             0.15 * np.sin(2 * np.pi * frequency * 0.5 * t)
     )
     wave = wave / np.max(np.abs(wave))
-
     kernel_size = 35
     kernel = np.ones(kernel_size) / kernel_size
     wave = np.convolve(wave, kernel, mode="same")
     wave = wave / np.max(np.abs(wave))
-
     attack_samples = int(sample_rate * 0.4)
     envelope = np.ones_like(wave)
     envelope[:attack_samples] = np.linspace(0, 1, attack_samples) ** 2
-
     decay = np.exp(-1.0 * np.linspace(0, 1, len(wave)))
     envelope = np.minimum(envelope, 1.0) * decay
-
     wave *= envelope
     return (wave * 0.4).astype(np.float32)
-
-
-def precompute_tiles(tile_map, duration):
-    # Build each tile's wave once, upfront, so tapping is instant with
-    # no real-time calculation
-    return {
-        tile: generate_tone(freq, duration)
-        for tile, freq in tile_map.items()
-    }
 
 
 def trigger_note(wave):
@@ -127,14 +104,18 @@ def build_drone(frequency):
     return wave.astype(np.float32)
 
 
-# ---------- SCALE / MOOD LOGIC ----------
+def start_audio_stream():
+    global stream
+    stream = sd.OutputStream(channels=1, samplerate=SAMPLE_RATE,
+                             blocksize=BLOCK_SIZE, callback=audio_callback)
+    stream.start()
+    threading.Thread(target=idle_watcher, daemon=True).start()
 
-SCALE_RATIOS = [1, 9 / 8, 5 / 4, 4 / 3, 3 / 2, 5 / 3, 15 / 8]
 
+SCALE_RATIOS = [1, 9/8, 5/4, 4/3, 3/2, 5/3, 15/8]
 
 def generate_scale(root_freq, ratios):
     return [root_freq * r for r in ratios]
-
 
 RANGE_SHIFTS = {"low": 0.5, "mid": 1.0, "high": 2.0}
 
@@ -156,6 +137,25 @@ MOOD_TO_RASA = {
     "anxious": "bhayanaka", "uneasy": "bibhatsa", "surprised": "adbhuta",
 }
 
+MOOD_COLORS = {
+    "calm": "#b09cd1", "love": "#e68ca0", "joyful": "#ffc759",
+    "confident": "#d6593e", "sad": "#5e7294", "angry": "#b23a3a",
+    "anxious": "#6d8169", "uneasy": "#6b5b6b", "surprised": "#63bdba",
+}
+
+MOOD_SYMBOLS = {
+    "calm": "~", "love": "\u2665", "joyful": "\u263a", "confident": "\u25b2",
+    "sad": "\u25e1", "angry": "\u2726", "anxious": "?", "uneasy": "\u2248", "surprised": "!",
+}
+
+NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+def freq_to_note_name(freq):
+    semitones_from_a4 = round(12 * np.log2(freq / 440.0))
+    note_index = (9 + semitones_from_a4) % 12
+    octave = 4 + (9 + semitones_from_a4) // 12
+    return f"{NOTE_NAMES[note_index]}{octave}"
+
 
 def build_tiles(rasa_name, range_name):
     profile = RASA_PROFILES[rasa_name]
@@ -165,55 +165,64 @@ def build_tiles(rasa_name, range_name):
     return tile_map, profile["duration"], shifted_root
 
 
-def select_mood():
-    print("How are you feeling?")
-    print(", ".join(MOOD_TO_RASA.keys()))
-    while True:
-        choice = input("Select a mood: ").strip().lower()
-        if choice in MOOD_TO_RASA:
-            return MOOD_TO_RASA[choice]
-        print("Not a valid mood, try again.")
+class Api:
+    def __init__(self):
+        self.wave_map = {}
+        self.audio_started = False
 
+    def get_moods(self):
+        return [
+            {"mood": m, "color": MOOD_COLORS[m], "symbol": MOOD_SYMBOLS[m]}
+            for m in MOOD_TO_RASA.keys()
+        ]
+    def get_manual(self):
+        manual = {}
+        for mood, rasa in MOOD_TO_RASA.items():
+            manual[mood] = {}
+            for range_name in RANGE_SHIFTS.keys():
+                tile_map, _, _ = build_tiles(rasa, range_name)
+                manual[mood][range_name] = [
+                    {"tile": tile, "note": freq_to_note_name(freq)}
+                    for tile, freq in tile_map.items()
+                ]
+        return manual
 
-def select_range():
-    print("Available ranges: low, mid, high")
-    while True:
-        choice = input("Select a range: ").strip().lower()
-        if choice in RANGE_SHIFTS:
-            return choice
-        print("Not a valid range, try again.")
+    def select_mood_and_range(self, mood, range_name):
+        global drone_wave
+        rasa = MOOD_TO_RASA[mood]
+        tile_map, duration, root_freq = build_tiles(rasa, range_name)
 
+        self.wave_map = {
+            tile: generate_tone(freq, duration) for tile, freq in tile_map.items()
+        }
+        drone_wave = build_drone(root_freq * 0.5)
 
-def play_session(wave_map):
-    print(f"\nTap tiles 1-{len(wave_map)} (press Enter after each). Type 'q' to quit.\n")
-    while True:
-        key = input("Tile: ").strip()
-        if key == "q":
-            break
-        if key in wave_map:
-            trigger_note(wave_map[key])
-        else:
-            print(f"Invalid tile. Use 1-{len(wave_map)}, or 'q' to quit.")
+        if not self.audio_started:
+            start_audio_stream()
+            self.audio_started = True
+
+        tiles = []
+        for tile_num, freq in tile_map.items():
+            tiles.append({
+                "id": tile_num,
+                "note": freq_to_note_name(freq),
+            })
+        return {
+            "tiles": tiles,
+            "color": MOOD_COLORS[mood],
+            "symbol": MOOD_SYMBOLS[mood],
+        }
+
+    def tap_tile(self, tile_id):
+        if tile_id in self.wave_map:
+            trigger_note(self.wave_map[tile_id])
+        return True
 
 
 if __name__ == "__main__":
-    rasa = select_mood()
-    range_choice = select_range()
-    tiles, note_duration, root_freq = build_tiles(rasa, range_choice)
-
-    drone_wave = build_drone(root_freq * 0.5)
-
-    stream = sd.OutputStream(
-        channels=1, samplerate=SAMPLE_RATE, blocksize=BLOCK_SIZE,
-        callback=audio_callback
+    api = Api()
+    window = webview.create_window(
+        "SeenInSilence", "index.html", js_api=api,
+        width=900, height=650, resizable=True
     )
-    stream.start()
-
-    watcher = threading.Thread(target=idle_watcher, daemon=True)
-    watcher.start()
-
-    wave_map = precompute_tiles(tiles, note_duration)
-    play_session(wave_map)
-
-    stream.stop()
-    stream.close()
+    webview.start()

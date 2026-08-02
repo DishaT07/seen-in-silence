@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+          background: linear-gradient(160deg, #16161c, #1f1f28);
+          color: #e8e6ec;
+          font-family: 'Segoe UI', system-ui, sans-serif;
+          height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+        }
+
+        #bg-notes {
+          position: fixed;
+          top: 0; left: 0;
+          width: 100%; height: 100%;
+          pointer-events: none;
+          overflow: hidden;
+          z-index: 0;
+        }
+        .bg-note {
+          position: absolute;
+          bottom: -40px;
+          color: rgba(255,255,255,0.06);
+          font-size: 22px;
+          animation: floatUp linear infinite;
+        }
+        @keyframes floatUp {
+          from { transform: translateY(0) rotate(0deg); }
+          to { transform: translateY(-110vh) rotate(15deg); }
+        }
+
+        .tap-note {
+          position: absolute;
+          font-size: 20px;
+          color: rgba(255,255,255,0.85);
+          pointer-events: none;
+          animation: popNote 0.9s ease-out forwards;
+        }
+        @keyframes popNote {
+          0%   { transform: translateY(0) scale(0.8); opacity: 1; }
+          100% { transform: translateY(-50px) scale(1.2); opacity: 0; }
+        }
+
+        .screen {
+          position: relative;
+          z-index: 1;
+          display: none;
+          flex-direction: column;
+          align-items: center;
+          width: 100%;
+          animation: fadeIn 0.5s ease;
+        }
+        .screen.active { display: flex; }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        h1 {
+          font-weight: 300;
+          font-size: 28px;
+          letter-spacing: 1px;
+          margin-bottom: 36px;
+          color: #f1f0f4;
+        }
+
+        .mood-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 18px;
+          width: 640px;
+        }
+
+        .mood-btn {
+          border: none;
+          border-radius: 16px;
+          padding: 26px 10px;
+          font-size: 16px;
+          color: #fff;
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+        }
+        .mood-btn:hover {
+          transform: translateY(-4px);
+          filter: brightness(1.12);
+          box-shadow: 0 8px 22px rgba(0,0,0,0.4);
+        }
+        .mood-symbol { font-size: 26px; }
+
+        .range-grid {
+          display: flex;
+          gap: 24px;
+        }
+        .range-btn {
+          border: none;
+          border-radius: 14px;
+          padding: 28px 46px;
+          font-size: 18px;
+          color: #fff;
+          cursor: pointer;
+          text-transform: capitalize;
+          transition: transform 0.15s ease, filter 0.15s ease;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+        }
+        .range-btn:hover {
+          transform: translateY(-4px);
+          filter: brightness(1.15);
+        }
+
+        .back-link {
+          margin-top: 30px;
+          color: #8a8794;
+          font-size: 13px;
+          cursor: pointer;
+          text-decoration: underline;
+        }
+        .back-link:hover { color: #c8c5d0; }
+
+        .tile-row {
+          display: flex;
+          gap: 16px;
+        }
+        .tile {
+          width: 90px;
+          height: 260px;
+          border-radius: 20px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: space-between;
+          padding: 22px 0 14px 0;
+          cursor: pointer;
+          border: none;
+          position: relative;
+          transition: transform 0.08s ease, box-shadow 0.15s ease;
+          box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+        }
+        .tile:hover {
+          transform: translateY(-6px);
+        }
+        .tile:active {
+          transform: translateY(-2px) scale(0.97);
+        }
+        .tile-symbol {
+          font-size: 30px;
+          color: rgba(255,255,255,0.92);
+        }
+        .tile-note {
+          font-size: 12px;
+          color: rgba(255,255,255,0.35);
+          letter-spacing: 0.5px;
+        }
+
+        .ripple {
+          position: absolute;
+          border-radius: 50%;
+          background: rgba(255,255,255,0.5);
+          width: 12px;
+          height: 12px;
+          pointer-events: none;
+          animation: ripple 0.6s ease-out forwards;
+        }
+        @keyframes ripple {
+          to {
+            width: 140px;
+            height: 140px;
+            margin-left: -70px;
+            margin-top: -70px;
+            opacity: 0;
+          }
+        }
+
+        .subtitle {
+          color: #8a8794;
+          font-size: 13px;
+          margin-bottom: 26px;
+          text-transform: capitalize;
+        }
+
+        .manual-link {
+          margin-top: 24px;
+          color: #8a8794;
+          font-size: 13px;
+          cursor: pointer;
+          text-decoration: underline;
+        }
+        .manual-link:hover { color: #c8c5d0; }
+
+        .modal-overlay {
+          display: none;
+          position: fixed;
+          top: 0; left: 0;
+          width: 100%; height: 100%;
+          background: rgba(0,0,0,0.6);
+          z-index: 10;
+          align-items: center;
+          justify-content: center;
+        }
+        .modal-overlay.active { display: flex; }
+
+        .modal-box {
+          background: #201f28;
+          border-radius: 18px;
+          padding: 30px;
+          width: 760px;
+          max-height: 80vh;
+          overflow-y: auto;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .modal-box h2 {
+          font-weight: 300;
+          margin-bottom: 6px;
+        }
+        .modal-box .modal-desc {
+          color: #8a8794;
+          font-size: 12px;
+          margin-bottom: 20px;
+        }
+        .manual-mood-block {
+          margin-bottom: 20px;
+        }
+        .manual-mood-title {
+          font-size: 15px;
+          text-transform: capitalize;
+          margin-bottom: 8px;
+          color: #d8d5e0;
+        }
+        .manual-range-row {
+          display: flex;
+          gap: 24px;
+          margin-bottom: 10px;
+          font-size: 13px;
+        }
+        .manual-range-label {
+          width: 40px;
+          color: #8a8794;
+          text-transform: capitalize;
+        }
+        .manual-notes {
+          display: flex;
+          gap: 10px;
+          color: #c8c5d0;
+        }
+        .manual-note-chip {
+          background: #2c2b36;
+          padding: 3px 8px;
+          border-radius: 6px;
+          font-size: 12px;
+        }
+        .modal-close {
+          margin-top: 16px;
+          color: #8a8794;
+          font-size: 13px;
+          cursor: pointer;
+          text-decoration: underline;
+        }
+        .modal-close:hover { color: #c8c5d0; }
+    </style>
+</head>
+<body>
+
+<div id="bg-notes"></div>
+
+<div id="mood-screen" class="screen active">
+    <h1>How are you feeling?</h1>
+    <div class="mood-grid" id="mood-grid"></div>
+    <div class="manual-link" onclick="openManual()">view note manual</div>
+</div>
+
+<div id="range-screen" class="screen">
+    <h1>Choose a range</h1>
+    <div class="range-grid" id="range-grid">
+        <button class="range-btn" data-range="low">Low</button>
+        <button class="range-btn" data-range="mid">Mid</button>
+        <button class="range-btn" data-range="high">High</button>
+    </div>
+    <div class="back-link" onclick="showScreen('mood-screen')">back</div>
+</div>
+
+<div id="tile-screen" class="screen">
+    <h1 id="tile-title"></h1>
+    <div class="subtitle" id="tile-subtitle"></div>
+    <div class="tile-row" id="tile-row"></div>
+    <div class="back-link" onclick="showScreen('mood-screen')">choose a different mood</div>
+</div>
+
+<div id="manual-modal" class="modal-overlay">
+    <div class="modal-box">
+        <h2>Note Reference Manual</h2>
+        <div class="modal-desc">Every mood, every range, mapped to its actual note. Useful if you know music and want to play deliberately.</div>
+        <div id="manual-content"></div>
+        <div class="modal-close" onclick="closeManual()">close</div>
+    </div>
+</div>
+
+<script>
+    let selectedMood = null;
+    let selectedColor = null;
+
+    function showScreen(id) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+    }
+
+    function spawnBackgroundNotes() {
+      const container = document.getElementById('bg-notes');
+      const symbols = ['♪', '♫', '♩', '♬'];
+      for (let i = 0; i < 14; i++) {
+        const note = document.createElement('span');
+        note.className = 'bg-note';
+        note.textContent = symbols[Math.floor(Math.random() * symbols.length)];
+        note.style.left = Math.random() * 100 + 'vw';
+        note.style.animationDuration = (12 + Math.random() * 10) + 's';
+        note.style.animationDelay = (Math.random() * 10) + 's';
+        note.style.fontSize = (16 + Math.random() * 14) + 'px';
+        container.appendChild(note);
+      }
+    }
+    spawnBackgroundNotes();
+
+    async function init() {
+      const moods = await window.pywebview.api.get_moods();
+      const grid = document.getElementById('mood-grid');
+      moods.forEach(m => {
+        const btn = document.createElement('button');
+        btn.className = 'mood-btn';
+        btn.style.background = m.color;
+        btn.innerHTML = `<span class="mood-symbol">${m.symbol}</span><span>${m.mood}</span>`;
+        btn.onclick = () => {
+          selectedMood = m.mood;
+          selectedColor = m.color;
+          showScreen('range-screen');
+        };
+        grid.appendChild(btn);
+      });
+
+      document.querySelectorAll('.range-btn').forEach(btn => {
+        btn.style.background = '#3a3945';
+        btn.onclick = async () => {
+          const range = btn.dataset.range;
+          const result = await window.pywebview.api.select_mood_and_range(selectedMood, range);
+          buildTiles(result, selectedMood, range);
+          showScreen('tile-screen');
+        };
+      });
+    }
+
+    function buildTiles(result, mood, range) {
+      document.getElementById('tile-title').textContent = mood;
+      document.getElementById('tile-subtitle').textContent = range + ' range';
+
+      const row = document.getElementById('tile-row');
+      row.innerHTML = '';
+      result.tiles.forEach(t => {
+        const tile = document.createElement('button');
+        tile.className = 'tile';
+        tile.style.background = result.color;
+        tile.innerHTML = `
+          <span class="tile-symbol">${result.symbol}</span>
+          <span class="tile-note">${t.note}</span>
+        `;
+        tile.onclick = (e) => {
+          window.pywebview.api.tap_tile(t.id);
+          spawnRipple(tile, e);
+          spawnTapNote(tile, e);
+        };
+        row.appendChild(tile);
+      });
+    }
+
+    function spawnRipple(tile, event) {
+      const ripple = document.createElement('div');
+      ripple.className = 'ripple';
+      const rect = tile.getBoundingClientRect();
+      ripple.style.left = (event.clientX - rect.left) + 'px';
+      ripple.style.top = (event.clientY - rect.top) + 'px';
+      tile.appendChild(ripple);
+      setTimeout(() => ripple.remove(), 600);
+    }
+
+    function spawnTapNote(tile, event) {
+      const symbols = ['♪', '♫', '♩'];
+      const note = document.createElement('span');
+      note.className = 'tap-note';
+      note.textContent = symbols[Math.floor(Math.random() * symbols.length)];
+      const rect = tile.getBoundingClientRect();
+      note.style.left = (event.clientX - rect.left - 8) + 'px';
+      note.style.top = (event.clientY - rect.top) + 'px';
+      tile.appendChild(note);
+      setTimeout(() => note.remove(), 900);
+    }
+
+    async function openManual() {
+      const manual = await window.pywebview.api.get_manual();
+      const content = document.getElementById('manual-content');
+      content.innerHTML = '';
+
+      Object.keys(manual).forEach(mood => {
+        const block = document.createElement('div');
+        block.className = 'manual-mood-block';
+
+        const title = document.createElement('div');
+        title.className = 'manual-mood-title';
+        title.textContent = mood;
+        block.appendChild(title);
+
+        Object.keys(manual[mood]).forEach(range => {
+          const row = document.createElement('div');
+          row.className = 'manual-range-row';
+
+          const label = document.createElement('div');
+          label.className = 'manual-range-label';
+          label.textContent = range;
+          row.appendChild(label);
+
+          const notes = document.createElement('div');
+          notes.className = 'manual-notes';
+          manual[mood][range].forEach(t => {
+            const chip = document.createElement('span');
+            chip.className = 'manual-note-chip';
+            chip.textContent = t.note;
+            notes.appendChild(chip);
+          });
+          row.appendChild(notes);
+
+          block.appendChild(row);
+        });
+
+        content.appendChild(block);
+      });
+
+      document.getElementById('manual-modal').classList.add('active');
+    }
+
+    function closeManual() {
+      document.getElementById('manual-modal').classList.remove('active');
+    }
+
+    window.addEventListener('pywebviewready', init);
+</script>
+</body>
+</html>
